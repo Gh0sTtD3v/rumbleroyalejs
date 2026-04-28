@@ -1,0 +1,13 @@
+{
+	"name": "rumble-royale",
+	"version": "1.0.0",
+	"description": "A pluggable battle royale game engine with custom lore, database adapters, and presentation hooks.",
+	"main": "index.js",
+	"keywords": [
+		"battle-royale",
+		"game-engine",
+		"discord",
+		"multiplayer"
+	],
+	"license": "MIT"
+}
