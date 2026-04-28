@@ -72,10 +72,11 @@ function pickWeighted(actions) {
 	return actions[actions.length - 1];
 }
 
-function runRound(players, settings, actions) {
+function runRound(players, settings, actions, itemResolver) {
 	const allActions = actions || defaultActions;
 	const soloActions = allActions.filter(a => a.mode === 'solo');
 	const duoActions = allActions.filter(a => a.mode === 'duo');
+	const resolve = itemResolver || (() => []);
 
 	const results = [];
 	let pending = null;
@@ -83,51 +84,69 @@ function runRound(players, settings, actions) {
 
 	while (index < players.length) {
 		const isLast = index === players.length - 1;
+		let result;
 
 		if (pending && isLast) {
 			const action = pickWeighted(duoActions);
-			results.push(action.execute({
+			result = action.execute({
 				player: pending,
 				opponent: players[index],
 				settings,
-			}));
-			index++;
-			pending = null;
+				playerItems: resolve(pending),
+				opponentItems: resolve(players[index]),
+			});
 		}
 		else if (!pending && isLast) {
 			const action = pickWeighted(soloActions);
-			results.push(action.execute({
+			result = action.execute({
 				player: players[index],
 				settings,
-			}));
-			index++;
+				playerItems: resolve(players[index]),
+			});
 		}
 		else {
 			const action = pickWeighted(allActions);
 
 			if (action.mode === 'solo') {
-				results.push(action.execute({
+				result = action.execute({
 					player: players[index],
 					settings,
-				}));
-				index++;
+					playerItems: resolve(players[index]),
+				});
 			}
 			else {
 				if (pending && pending.id !== players[index].id) {
-					results.push(action.execute({
+					result = action.execute({
 						player: pending,
 						opponent: players[index],
 						settings,
-					}));
-					index++;
-					pending = null;
+						playerItems: resolve(pending),
+						opponentItems: resolve(players[index]),
+					});
 				}
 				else {
 					pending = players[index];
 					index++;
+					continue;
 				}
 			}
 		}
+
+		// Apply survive bonus — loser's items can save them from a kill
+		if (result && result.isKill && result.loser) {
+			const loserItems = resolve(result.loser);
+			const surviveBonus = loserItems.reduce(
+				(sum, i) => sum + (i.modifiers?.surviveChance || 0), 0
+			);
+			if (surviveBonus > 0 && Math.random() < Math.min(0.5, surviveBonus)) {
+				result.isKill = false;
+				result.savedByItem = true;
+			}
+		}
+
+		if (result) results.push(result);
+		index++;
+		if (result && pending) pending = null;
 	}
 
 	const survivors = results

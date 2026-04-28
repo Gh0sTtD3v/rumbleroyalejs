@@ -33,25 +33,45 @@ const defaultLore = {
 	},
 };
 
-function resolveLore(lore, result, formatPlayer) {
+function resolveLore(lore, result, formatPlayer, winnerItems) {
 	const fmt = formatPlayer || (p => p?.id || '???');
+	const outcome = result.isKill ? 'kill' : 'survive';
 
-	const category = lore[result.type];
-	if (!category) return 'Unknown event.';
+	// Check winner's items for action-specific lore
+	let entry = null;
+	let usedItem = null;
 
-	const pool = result.isKill ? category.kill : category.survive;
-	if (!pool || pool.length === 0) return 'Unknown event.';
+	if (winnerItems && winnerItems.length > 0) {
+		const itemsWithLore = winnerItems.filter(
+			i => i.lore?.[result.type]?.[outcome]?.length > 0
+		);
+		if (itemsWithLore.length > 0) {
+			usedItem = itemsWithLore[Math.floor(Math.random() * itemsWithLore.length)];
+			const pool = usedItem.lore[result.type][outcome];
+			entry = pool[Math.floor(Math.random() * pool.length)];
+		}
+	}
 
-	const entry = pool[Math.floor(Math.random() * pool.length)];
+	// Fallback to base lore
+	if (!entry) {
+		const category = lore[result.type];
+		if (!category) return { text: 'Unknown event.', image: null, item: null };
+
+		const pool = category[outcome];
+		if (!pool || pool.length === 0) return { text: 'Unknown event.', image: null, item: null };
+
+		entry = pool[Math.floor(Math.random() * pool.length)];
+	}
+
 	const isObject = typeof entry === 'object' && entry !== null;
 	const template = isObject ? entry.text : entry;
-	const image = isObject ? entry.image : null;
+	const image = isObject ? entry.image : (usedItem?.image || null);
 
 	const text = template
 		.replaceAll('{winner}', fmt(result.winner))
 		.replaceAll('{loser}', fmt(result.loser));
 
-	return { text, image };
+	return { text, image, item: usedItem };
 }
 
 module.exports = {

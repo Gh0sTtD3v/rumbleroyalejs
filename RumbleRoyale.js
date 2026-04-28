@@ -1,5 +1,6 @@
 const { randomId, runRound, defaultActions } = require('./mechanics');
 const { defaultLore, resolveLore } = require('./lore');
+const { defaultItems, getPlayerItems, rollDrop } = require('./items');
 
 const defaultSettings = {
 	max: 1_000_000,
@@ -21,17 +22,25 @@ class RumbleRoyale {
 		this.settings = { ...defaultSettings, ...options.settings };
 		this.formatPlayer = options.formatPlayer || (p => p?.id || '???');
 		this.actions = options.actions || defaultActions;
+		this.items = options.items || defaultItems;
+		this.dropRate = options.dropRate ?? 0.3;
 
 		// Event callbacks
 		this.onBattleCreated = options.onBattleCreated || (() => {});
 		this.onPlayerJoined = options.onPlayerJoined || (() => {});
 		this.onRoundEnd = options.onRoundEnd || (() => {});
 		this.onBattleEnd = options.onBattleEnd || (() => {});
+		this.onDrop = options.onDrop || (() => {});
 		this.onError = options.onError || (() => {});
 	}
 
-	narrateResults(results) {
-		return results.map(r => resolveLore(this.lore, r, this.formatPlayer));
+	narrateResults(results, inventoryMap) {
+		return results.map(r => {
+			const winnerItems = r.winner
+				? getPlayerItems(inventoryMap?.[r.winner.id], this.items)
+				: [];
+			return resolveLore(this.lore, r, this.formatPlayer, winnerItems);
+		});
 	}
 
 	async createBattle(meta = {}) {
@@ -81,6 +90,7 @@ class RumbleRoyale {
 			id: playerId,
 			xp: member.xp || 0,
 			balance: newBalance,
+			inventory: member.inventory || [],
 		};
 
 		const players = [...battle.players, player];
@@ -108,8 +118,34 @@ class RumbleRoyale {
 			return;
 		}
 
-		const { results, survivors } = runRound(players, this.settings, this.actions);
-		const narration = this.narrateResults(results);
+		// Build inventory map and item resolver
+		const inventoryMap = {};
+		for (const p of players) {
+			inventoryMap[p.id] = p.inventory || [];
+		}
+		const itemResolver = (player) =>
+			getPlayerItems(inventoryMap[player.id], this.items);
+
+		const { results, survivors } = runRound(
+			players, this.settings, this.actions, itemResolver
+		);
+		const narration = this.narrateResults(results, inventoryMap);
+
+		// Roll drops for survivors
+		const drops = [];
+		for (const survivor of survivors) {
+			const drop = rollDrop(this.items, this.dropRate);
+			if (drop) {
+				const inv = inventoryMap[survivor.id] || [];
+				if (!inv.includes(drop.id)) {
+					inv.push(drop.id);
+					survivor.inventory = inv;
+					await this.db.updateMember(survivor.id, { inventory: inv });
+					drops.push({ player: survivor, item: drop });
+					this.onDrop({ player: survivor, item: drop });
+				}
+			}
+		}
 
 		if (survivors.length === 0) {
 			this.onError({ battleId, message: 'No survivors. Battle void.' });
@@ -138,6 +174,7 @@ class RumbleRoyale {
 				winner: { ...winner, balance: newBalance, xp: newXp },
 				results,
 				narration,
+				drops,
 				round: round + 1,
 				prizepool,
 			});
@@ -156,6 +193,7 @@ class RumbleRoyale {
 			survivors,
 			results,
 			narration,
+			drops,
 			round: round + 1,
 			prizepool,
 		});
